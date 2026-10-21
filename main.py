@@ -51,7 +51,7 @@ PISTON_URL = "https://emkc.org/api/v2/piston"
 KEYS_FILE = "keys.json"
 DRAFTS_FILE = "jagx_job_drafts.json"
 TRAINING_DATA_FILE = "jagx_training_data.jsonl"
-TRAINING_DATA_ENABLED = os.environ.get("JAGX_TRAINING_DATA_ENABLED", "true").lower() == "true"
+TRAINING_DATA_ENABLED = os.environ.get("JAGX_TRAINING_DATA_ENABLED", "false").lower() == "true"
 
 ADMIN_SECRET = os.environ.get("JAGX_ADMIN_SECRET", "")  # Never ship a predictable fallback secret
 PERMANENT_KEYS = set(k.strip() for k in os.environ.get("JAGX_PERMANENT_KEYS", "").split(",") if k.strip())
@@ -63,6 +63,7 @@ MAX_CODE_LEN = 12000
 MAX_TOOL_RESULT_LEN = 3000
 MAX_BODY_BYTES = 15 * 1024 * 1024
 GLOBAL_IP_RPM = 100
+PUBLIC_CHAT_RPM = max(1, int(os.environ.get("JAGX_PUBLIC_CHAT_RPM", "12")))
 DRAFT_EXPIRY_SECONDS = 48 * 3600
 APP_START_TIME = time.time()
 
@@ -73,6 +74,7 @@ drafts_lock = threading.Lock()
 training_lock = threading.Lock()
 rate_limit_store = defaultdict(list)
 global_ip_rate_store = defaultdict(list)
+public_chat_rate_store = defaultdict(list)
 
 class BodySizeLimitMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -648,6 +650,47 @@ def health():
         "local_brain": len(LOCAL_KB),
         "providers": {"hf": bool(HF_TOKEN), "groq": bool(GROQ_API_KEY), "openrouter": bool(OPENROUTER_API_KEY)},
     }
+
+@app.post("/public-chat")
+def public_chat(req: ChatRequest, request: Request):
+    """Rate-limited guest chat for browser clients; no permanent API key is exposed in frontend code."""
+    client_ip = request.client.host if request.client else "unknown"
+    now = time.time()
+    with lock:
+        recent = [stamp for stamp in public_chat_rate_store[client_ip] if now - stamp < 60]
+        if len(recent) >= PUBLIC_CHAT_RPM:
+            raise HTTPException(
+                status_code=429,
+                detail=f"Guest limit reached ({PUBLIC_CHAT_RPM} requests/minute). Please wait a minute or use your authenticated account.",
+            )
+        recent.append(now)
+        public_chat_rate_store[client_ip] = recent
+
+    msg = (req.message or "").strip()
+    if not msg:
+        raise HTTPException(status_code=400, detail="Empty message")
+    if len(msg) > MAX_CODE_LEN:
+        raise HTTPException(status_code=413, detail=f"Message is too long (maximum {MAX_CODE_LEN} characters).")
+
+    safe_history = []
+    for item in (req.history or [])[-12:]:
+        if isinstance(item, dict) and item.get("role") in ("user", "assistant"):
+            safe_history.append({
+                "role": item["role"],
+                "content": str(item.get("content") or "")[:6000],
+            })
+
+    reply, attachment = generate_response(msg, safe_history)
+    if TRAINING_DATA_ENABLED:
+        log_training(msg, reply)
+    out = {
+        "response": reply,
+        "rate_limit": f"{max(0, PUBLIC_CHAT_RPM - len(recent))} guest requests remaining this minute",
+    }
+    if attachment:
+        out["attachment"] = attachment
+    return out
+
 
 @app.post("/chat")
 def chat(req: ChatRequest, x_api_key: Optional[str] = Header(None, alias="x-api-key")):
