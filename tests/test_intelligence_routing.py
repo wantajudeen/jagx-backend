@@ -10,6 +10,7 @@ class IntelligenceRoutingTests(unittest.TestCase):
 
     def test_routes_image_requests_to_tools(self):
         self.assertTrue(main.needs_tools("Create an image of a red jaguar"))
+        self.assertTrue(main.needs_tools("Draw a red jaguar logo"))
 
     def test_routes_artifact_requests_to_tools(self):
         self.assertTrue(main.needs_tools("Generate a PDF resume for a software engineer"))
