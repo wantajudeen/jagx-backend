@@ -10,6 +10,7 @@ Created by JagX & JRILICENSE
 
 import os
 import io
+import html
 import json
 import secrets
 import threading
@@ -20,7 +21,7 @@ import zipfile
 import logging
 from typing import Optional, List, Dict, Tuple
 from collections import defaultdict
-from urllib.parse import quote
+from urllib.parse import quote, urlparse, parse_qs
 from datetime import datetime
 from io import BytesIO
 
@@ -319,6 +320,7 @@ def check_rate_limit(key: str) -> tuple:
     return True, f"{limit - len(rate_limit_store[key])} remaining this hour"
 
 def free_web_search(query: str, max_results: int = 5) -> str:
+    """Search the public web and return concise, linked snippets without inventing citations."""
     try:
         url = f"https://html.duckduckgo.com/html/?q={quote(query)}"
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
@@ -326,24 +328,30 @@ def free_web_search(query: str, max_results: int = 5) -> str:
         if r.status_code != 200:
             return "Search currently unavailable."
         results = []
-        blocks = re.findall(r'class="result__a"[^>]*>(.*?)</a>.*?class="result__snippet"[^>]*>(.*?)</(?:a|td)>', r.text, re.DOTALL)
-        for title, snippet in blocks[:max_results]:
-            title = re.sub(r'<.*?>', '', title).strip()
-            snippet = re.sub(r'<.*?>', '', snippet).strip()
-            if title and len(snippet) > 30:
-                results.append(f"**{title}**\n{snippet}")
-        if not results:
-            snippets = re.findall(r'class="result__snippet"[^>]*>(.*?)</(?:a|td)>', r.text, re.DOTALL)
-            for s in snippets[:max_results]:
-                clean = re.sub(r'<.*?>', '', s).strip()
-                if len(clean) > 40:
-                    results.append(clean)
+        pattern = re.compile(
+            r'<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>(.*?)</a>.*?'
+            r'class="result__snippet"[^>]*>(.*?)</(?:a|td)>',
+            re.DOTALL,
+        )
+        for href, title, snippet in pattern.findall(r.text)[:max_results]:
+            title = html.unescape(re.sub(r"<.*?>", "", title)).strip()
+            snippet = html.unescape(re.sub(r"<.*?>", "", snippet)).strip()
+            href = html.unescape(href).strip()
+            if href.startswith("//"):
+                href = "https:" + href
+            parsed = urlparse(href)
+            if "duckduckgo.com" in (parsed.netloc or ""):
+                target = parse_qs(parsed.query).get("uddg", [])
+                if target:
+                    href = target[0]
+            if title and href.startswith(("https://", "http://")):
+                results.append(f"**[{title}]({href})**\n{snippet}")
         if results:
-            return "Here’s what I found online:\n\n" + "\n\n".join(results)
-        return "No relevant results found."
+            return "Web search results (open the source links to verify details):\n\n" + "\n\n".join(results)
+        return "No usable search results were returned. Try a more specific query or retry later."
     except Exception as e:
         logger.warning(f"Web search failed: {e}")
-        return "Search failed at the moment."
+        return "Search failed at the moment. No live sources were available for this request."
 
 def run_code_sandboxed(language: str, code: str) -> str:
     if len(code) > MAX_CODE_LEN:
