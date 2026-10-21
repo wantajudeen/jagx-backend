@@ -9,6 +9,7 @@ Created by JagX & JRILICENSE
 """
 
 import os
+import hashlib
 import io
 import html
 import json
@@ -56,6 +57,11 @@ TRAINING_DATA_ENABLED = os.environ.get("JAGX_TRAINING_DATA_ENABLED", "false").lo
 
 ADMIN_SECRET = os.environ.get("JAGX_ADMIN_SECRET", "")  # Never ship a predictable fallback secret
 PERMANENT_KEYS = set(k.strip() for k in os.environ.get("JAGX_PERMANENT_KEYS", "").split(",") if k.strip())
+# Emergency denylist for a permanent key that was exposed in a public workflow file.
+# Keep only its SHA-256 digest here; never store the raw credential in source.
+REVOKED_KEY_SHA256 = {
+    "3639728f3ca0f212f1589c72a0544ed937195415116c145edd312db0542ee300",
+}
 
 TIER_HOURLY_LIMITS = {"free": 60, "premium": 300, "premium_plus": 800, "master": None, "admin": None}
 
@@ -295,6 +301,8 @@ def save_keys(keys: dict):
 
 def is_valid_key(key: str) -> bool:
     if not key:
+        return False
+    if hashlib.sha256(key.encode("utf-8")).hexdigest() in REVOKED_KEY_SHA256:
         return False
     if key in PERMANENT_KEYS:
         return True
