@@ -103,6 +103,7 @@ _DEFAULT_CORS_ORIGINS = [
     "https://jagxai.name.ng",
     "https://www.jagxai.name.ng",
     "https://jagx-ai-app.vercel.app",
+    "https://jagx-ai-app-git-redesign-jagx-ai-full-experience-jagxs-projects.vercel.app",
     "https://jagx-ai-3aqkdmurl-jagxs-projects.vercel.app",
     "http://localhost:3000",
     "http://localhost:5173",
