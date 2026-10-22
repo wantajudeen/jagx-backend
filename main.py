@@ -279,6 +279,7 @@ Rules:
 {{"tool": "web_search", "input": "search query"}}
 {{"tool": "run_code", "input": {{"language": "python", "code": "print(1+1)"}}}}
 {{"tool": "generate_image", "input": {{"prompt": "detailed visual description", "style": "realistic or illustration"}}}}
+{{"tool": "generate_video", "input": {{"prompt": "detailed video description"}}}}
 {{"tool": "generate_pdf", "input": {{"title": "Title", "sections": [{{"heading": "Section", "content": "text"}}]}}}}
 {{"tool": "generate_cv", "input": {{"name": "Full Name", "title": "Job Title", "summary": "...", "experience": [{{"role": "...", "company": "...", "dates": "...", "bullets": ["..."]}}], "education": [], "skills": []}}}}
 {{"tool": "generate_portfolio", "input": {{"name": "Name", "title": "Title", "about": "...", "projects": [{{"name": "...", "description": "...", "link": "..."}}], "skills": [], "contact": {{"email": "", "github": "", "linkedin": ""}}}}}}
@@ -533,6 +534,7 @@ def needs_tools(msg: str) -> bool:
         r"\b(latest|current|today|tonight|this week|recent|breaking|news|search the web|web search|look up|research|find sources|source links|price today|as of \d{4})\b",
         r"\b(run|execute|test|benchmark)\b.{0,60}\b(code|python|javascript|typescript|snippet|script|program)\b",
         r"\b(generate|create|draw|make|illustrate|paint)\b.{0,60}\b(image|picture|illustration|artwork|logo|icon|diagram|poster|banner)\b",
+        r"\\b(generate|create|make)\\b.{0,60}\\b(video|animation|clip)\\b",
         r"\b(draw|illustrate|paint)\b",
         r"\b(generate|create|make|export)\b.{0,50}\b(pdf|resume|cv|portfolio)\b",
         r"\b(create|build|generate)\b.{0,50}\b(portfolio website|portfolio page)\b",
@@ -573,6 +575,39 @@ def run_agent(user_message: str, history: Optional[List] = None) -> Tuple[str, O
                 url = "https://image.pollinations.ai/prompt/" + quote(f"{style} style, high quality. {prompt}", safe="") + "?width=1024&height=1024&nologo=true"
                 attachment = {"type": "image", "url": url}
                 result = "Image-generation URL prepared. The browser must load it successfully before the user can see the finished image."
+        elif tool == "generate_video" and isinstance(inp, dict):
+            prompt = str(inp.get("prompt") or "").strip()[:1800]
+            token = os.environ.get("REPLICATE_API_TOKEN", "").strip()
+            model = os.environ.get("REPLICATE_VIDEO_MODEL", "").strip()
+            if not prompt:
+                result = "Video generation needs a non-empty prompt."
+            elif not token or not model:
+                result = "Video generation is not configured on the backend. No video was generated. Configure REPLICATE_API_TOKEN and REPLICATE_VIDEO_MODEL in the private backend environment."
+            else:
+                try:
+                    response = HTTP.post(
+                        "https://api.replicate.com/v1/models/" + model + "/predictions",
+                        headers={"Authorization": f"Bearer {token}", "Prefer": "wait"},
+                        json={"input": {"prompt": prompt}},
+                        timeout=90,
+                    )
+                    if response.status_code >= 400:
+                        result = f"Video provider rejected the request (HTTP {response.status_code}). Check model and account limits."
+                    else:
+                        data = response.json()
+                        output = data.get("output")
+                        urls = output if isinstance(output, list) else [output]
+                        video_url = next((u for u in urls if isinstance(u, str) and u.startswith("https://") and any(ext in u.lower() for ext in (".mp4", ".webm", ".mov"))), None)
+                        if video_url:
+                            attachment = {"type": "video", "url": video_url}
+                            result = "Video URL returned by the configured provider."
+                        elif data.get("status") in ("starting", "processing"):
+                            result = "Video job is processing; automatic polling is not implemented yet."
+                        else:
+                            result = "The configured video provider returned no playable video URL."
+                except requests.RequestException as exc:
+                    logger.warning("Agent video provider failed: %s", type(exc).__name__)
+                    result = "The video provider could not be reached. Please retry."
         elif tool == "generate_pdf" and isinstance(inp, dict):
             try:
                 pdf_bytes = generate_pdf_document(inp.get("title", "Document"), inp.get("sections") or [])
