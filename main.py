@@ -273,6 +273,9 @@ Rules:
 - For requests for video, do not pretend image generation is video generation; report whether the backend's video provider is configured.
 - If a tool returns an error or unsupported result, explain the specific blocker and the next action instead of improvising a success story.
 - Strong at Flutter/Dart, mobile backends, full-stack, and clear documentation.
+- Treat coding, debugging, code review, architecture, and build requests as engineering work: make a concrete plan, include complete code or exact file-level changes, explain tests, and never claim repository edits unless a repository tool actually performed them.
+- For multi-step requests, keep a short checklist in the response and complete the most useful safe steps before asking the user to continue.
+- If the user asks to create an artifact, invoke the appropriate tool rather than only describing the artifact.
 - Math: plain text only, no LaTeX.
 - When you need a tool, reply with ONLY one JSON object (no markdown, no extra text):
 
@@ -527,6 +530,8 @@ def needs_tools(msg: str) -> bool:
         r"\b(generate|create|make)\b.{0,60}\b(video|animation|clip)\b",
         r"\b(draw|illustrate|paint)\b",
         r"\b(generate|create|make|export)\b.{0,50}\b(pdf|resume|cv|portfolio)\b",
+        r"\b(write|generate|debug|fix|review|refactor|explain)\b.{0,60}\b(code|function|class|script|program|api|component|bug|error|query|sql)\b",
+        r"\b(build|implement|create|design)\b.{0,60}\b(app|website|backend|frontend|api|feature|agent|automation|project|database|dashboard)\b",
         r"\b(create|build|generate)\b.{0,50}\b(portfolio website|portfolio page)\b",
     ]
     return any(re.search(pattern, m) for pattern in intent_patterns)
@@ -734,6 +739,7 @@ def capabilities():
             "openrouter": bool(OPENROUTER_API_KEY),
             "huggingface": bool(HF_TOKEN),
             "replicate": bool(os.environ.get("REPLICATE_API_TOKEN")),
+            "nvidia": bool(NVIDIA_API_KEY),
         },
     }
 
