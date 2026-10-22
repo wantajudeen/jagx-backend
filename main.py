@@ -523,6 +523,8 @@ def needs_tools(msg: str) -> bool:
     m = re.sub(r"\s+", " ", (msg or "").lower()).strip()
     if not m:
         return False
+    if any(tag in m for tag in ("[research mode]","[code mode]","[plan mode]")):
+        return True
     intent_patterns = [
         r"\b(latest|current|today|tonight|this week|recent|breaking|news|search the web|web search|look up|research|find sources|source links|price today|as of \d{4})\b",
         r"\b(run|execute|test|benchmark)\b.{0,60}\b(code|python|javascript|typescript|snippet|script|program)\b",
@@ -532,12 +534,21 @@ def needs_tools(msg: str) -> bool:
         r"\b(generate|create|make|export)\b.{0,50}\b(pdf|resume|cv|portfolio)\b",
         r"\b(write|generate|debug|fix|review|refactor|explain)\b.{0,60}\b(code|function|class|script|program|api|component|bug|error|query|sql)\b",
         r"\b(build|implement|create|design)\b.{0,60}\b(app|website|backend|frontend|api|feature|agent|automation|project|database|dashboard)\b",
+        r"\\b(write|generate|debug|fix|review|refactor|explain)\\b.{0,60}\\b(code|function|class|script|program|api|component|bug|error|query|sql)\\b",
+        r"\\b(build|implement|create|design)\\b.{0,60}\\b(app|website|backend|frontend|api|feature|agent|automation|project|database|dashboard)\\b",
         r"\b(create|build|generate)\b.{0,50}\b(portfolio website|portfolio page)\b",
     ]
     return any(re.search(pattern, m) for pattern in intent_patterns)
 
 def run_agent(user_message: str, history: Optional[List] = None) -> Tuple[str, Optional[dict]]:
     messages = [{"role": "system", "content": AGENT_SYSTEM}]
+    lower_request = (user_message or "").lower()
+    if "[code mode]" in lower_request:
+        messages.append({"role": "system", "content": "CODING MODE: behave as a senior engineer. Give concrete code, debugging steps, root cause, and tests. If execution is useful, use run_code and report real output."})
+    elif "[research mode]" in lower_request:
+        messages.append({"role": "system", "content": "RESEARCH MODE: search for current information, use source links from the search tool, compare evidence, and separate facts from assumptions."})
+    elif "[plan mode]" in lower_request:
+        messages.append({"role": "system", "content": "TASK PLANNING MODE: break the goal into ordered steps, start with the first safe useful action, track blockers, and never claim background execution that has not occurred."})
     if history:
         for m in history[-4:]:
             if m.get("role") in ("user", "assistant"):
