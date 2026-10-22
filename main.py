@@ -548,7 +548,7 @@ def run_agent(user_message: str, history: Optional[List] = None) -> Tuple[str, O
     messages.append({"role": "user", "content": user_message})
     attachment = None
     for _ in range(MAX_TOOL_STEPS):
-        raw = call_llm(messages, max_tokens=1300
+        raw = call_llm(messages, max_tokens=1300)
         if not raw:
             break
         raw = raw.strip()
