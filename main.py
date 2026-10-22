@@ -534,7 +534,7 @@ def needs_tools(msg: str) -> bool:
         r"\b(latest|current|today|tonight|this week|recent|breaking|news|search the web|web search|look up|research|find sources|source links|price today|as of \d{4})\b",
         r"\b(run|execute|test|benchmark)\b.{0,60}\b(code|python|javascript|typescript|snippet|script|program)\b",
         r"\b(generate|create|draw|make|illustrate|paint)\b.{0,60}\b(image|picture|illustration|artwork|logo|icon|diagram|poster|banner)\b",
-        r"\\b(generate|create|make)\\b.{0,60}\\b(video|animation|clip)\\b",
+        r"\b(generate|create|make)\b.{0,60}\b(video|animation|clip)\b",
         r"\b(draw|illustrate|paint)\b",
         r"\b(generate|create|make|export)\b.{0,50}\b(pdf|resume|cv|portfolio)\b",
         r"\b(create|build|generate)\b.{0,50}\b(portfolio website|portfolio page)\b",
