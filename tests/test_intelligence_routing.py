@@ -24,6 +24,15 @@ class IntelligenceRoutingTests(unittest.TestCase):
     def test_routes_explicit_code_execution_to_tools(self):
         self.assertTrue(main.needs_tools("Run this Python code: print(2 + 2)"))
 
+    def test_routes_common_coding_requests_to_agent(self):
+        self.assertTrue(main.needs_tools("Fix this code and explain the bug"))
+        self.assertTrue(main.needs_tools("Build a website with a login page"))
+
+    def test_routes_bot_modes_to_agent(self):
+        self.assertTrue(main.needs_tools("[CODE MODE] Write a Python function"))
+        self.assertTrue(main.needs_tools("[RESEARCH MODE] Compare the best database options"))
+        self.assertTrue(main.needs_tools("[PLAN MODE] Plan a multi-step migration"))
+
     def test_explanations_do_not_require_tools(self):
         self.assertFalse(main.needs_tools("Explain recursion in simple terms"))
 
