@@ -484,45 +484,35 @@ a {{ color: #0066cc; }}
 </html>"""
 
 def call_llm(messages: list, max_tokens: int = 1100) -> Optional[str]:
+    """Try configured model providers in order; keys stay server-side."""
+    providers = []
     if GROQ_API_KEY:
-        try:
-            r = HTTP.post(
-                "https://api.groq.com/openai/v1/chat/completions",
-                headers={"Authorization": f"Bearer {GROQ_API_KEY}", "Content-Type": "application/json"},
-                json={"model": GROQ_MODEL, "messages": messages, "max_tokens": max_tokens, "temperature": 0.35},
-                timeout=25,
-            )
-            if r.status_code == 200:
-                return r.json()["choices"][0]["message"]["content"]
-            logger.warning("Groq returned HTTP %s: %s", r.status_code, (r.text or "")[:240])
-        except Exception as e:
-            logger.warning("Groq request failed: %s", type(e).__name__)
+        providers.append(("Groq", "https://api.groq.com/openai/v1/chat/completions", GROQ_API_KEY, GROQ_MODEL, 25))
+    if NVIDIA_API_KEY:
+        providers.append(("NVIDIA NIM", "https://integrate.api.nvidia.com/v1/chat/completions", NVIDIA_API_KEY, os.environ.get("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct"), 40))
     if OPENROUTER_API_KEY:
-        try:
-            r = HTTP.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers={"Authorization": f"Bearer {OPENROUTER_API_KEY}", "Content-Type": "application/json"},
-                json={"model": OPENROUTER_MODEL, "messages": messages, "max_tokens": max_tokens},
-                timeout=30,
-            )
-            if r.status_code == 200:
-                return r.json()["choices"][0]["message"]["content"]
-            logger.warning("OpenRouter returned HTTP %s: %s", r.status_code, (r.text or "")[:240])
-        except Exception as e:
-            logger.warning("OpenRouter request failed: %s", type(e).__name__)
+        providers.append(("OpenRouter", "https://openrouter.ai/api/v1/chat/completions", OPENROUTER_API_KEY, OPENROUTER_MODEL, 30))
     if HF_TOKEN:
+        providers.append(("Hugging Face", "https://router.huggingface.co/v1/chat/completions", HF_TOKEN, os.environ.get("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct"), 35))
+    for name, url, key, model, timeout in providers:
         try:
-            r = HTTP.post(
-                "https://router.huggingface.co/v1/chat/completions",
-                headers={"Authorization": f"Bearer {HF_TOKEN}", "Content-Type": "application/json"},
-                json={"model": os.environ.get("HF_MODEL", "Qwen/Qwen2.5-7B-Instruct"), "messages": messages, "max_tokens": max_tokens, "temperature": 0.35},
-                timeout=35,
+            response = HTTP.post(
+                url,
+                headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+                json={"model": model, "messages": messages, "max_tokens": max_tokens, "temperature": 0.35, "stream": False},
+                timeout=timeout,
             )
-            if r.status_code == 200:
-                return r.json()["choices"][0]["message"]["content"]
-            logger.warning("Hugging Face returned HTTP %s: %s", r.status_code, (r.text or "")[:240])
-        except Exception as e:
-            logger.warning("Hugging Face request failed: %s", type(e).__name__)
+            if response.status_code == 200:
+                payload = response.json()
+                choices = payload.get("choices") or []
+                content = choices[0].get("message", {}).get("content") if choices else None
+                if isinstance(content, str) and content.strip():
+                    return content.strip()
+                logger.warning("%s returned an empty completion", name)
+            else:
+                logger.warning("%s returned HTTP %s: %s", name, response.status_code, (response.text or "")[:180])
+        except Exception as exc:
+            logger.warning("%s request failed: %s", name, type(exc).__name__)
     return None
 
 def needs_tools(msg: str) -> bool:
@@ -714,7 +704,7 @@ def health():
         "version": "7.0.0",
         "uptime_seconds": int(time.time() - APP_START_TIME),
         "local_brain": len(LOCAL_KB),
-        "providers": {"hf": bool(HF_TOKEN), "groq": bool(GROQ_API_KEY), "openrouter": bool(OPENROUTER_API_KEY), "replicate": bool(os.environ.get("REPLICATE_API_TOKEN"))},
+        "providers": {"hf": bool(HF_TOKEN), "groq": bool(GROQ_API_KEY), "openrouter": bool(OPENROUTER_API_KEY), "replicate": bool(os.environ.get("REPLICATE_API_TOKEN")), "nvidia": bool(NVIDIA_API_KEY)},
     }
 
 
