@@ -656,7 +656,7 @@ def root():
         "created_by": "JagX & JRILICENSE",
         "features": [
             "permanent_api_keys", "text_and_coding", "local_knowledge_fallback",
-            "tools", "pdf", "images", "multi_provider"
+            "tools", "pdf", "image_generation_endpoint", "video_generation_when_configured", "multi_provider"
         ],
     }
 
@@ -668,8 +668,113 @@ def health():
         "version": "7.0.0",
         "uptime_seconds": int(time.time() - APP_START_TIME),
         "local_brain": len(LOCAL_KB),
-        "providers": {"hf": bool(HF_TOKEN), "groq": bool(GROQ_API_KEY), "openrouter": bool(OPENROUTER_API_KEY)},
+        "providers": {"hf": bool(HF_TOKEN), "groq": bool(GROQ_API_KEY), "openrouter": bool(OPENROUTER_API_KEY), "replicate": bool(os.environ.get("REPLICATE_API_TOKEN"))},
     }
+
+
+class MediaRequest(BaseModel):
+    prompt: str
+    style: Optional[str] = "Cinematic"
+
+
+def _clean_media_prompt(prompt: str) -> str:
+    prompt = (prompt or "").strip()
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Please describe what you want to create.")
+    if len(prompt) > 1800:
+        raise HTTPException(status_code=413, detail="Prompt is too long (maximum 1,800 characters).")
+    return prompt
+
+
+@app.get("/capabilities")
+def capabilities():
+    return {
+        "chat": True,
+        "image_generation": True,
+        "video_generation": bool(os.environ.get("REPLICATE_API_TOKEN") and os.environ.get("REPLICATE_VIDEO_MODEL")),
+        "google_auth": "Supabase OAuth provider configuration required",
+        "providers": {
+            "groq": bool(GROQ_API_KEY),
+            "openrouter": bool(OPENROUTER_API_KEY),
+            "huggingface": bool(HF_TOKEN),
+            "replicate": bool(os.environ.get("REPLICATE_API_TOKEN")),
+        },
+    }
+
+
+@app.post("/generate/image")
+def generate_image(req: MediaRequest, request: Request):
+    """Return an image-generation URL via Pollinations or use a configured Replicate image model."""
+    prompt = _clean_media_prompt(req.prompt)
+    style = (req.style or "Cinematic").strip()[:40]
+    full_prompt = f"{style} style, high quality. {prompt}"
+    replicate_token = os.environ.get("REPLICATE_API_TOKEN", "").strip()
+    replicate_model = os.environ.get("REPLICATE_IMAGE_MODEL", "").strip()
+    if replicate_token and replicate_model:
+        try:
+            response = HTTP.post(
+                "https://api.replicate.com/v1/models/" + replicate_model + "/predictions",
+                headers={"Authorization": f"Bearer {replicate_token}", "Prefer": "wait"},
+                json={"input": {"prompt": full_prompt}},
+                timeout=90,
+            )
+            if response.status_code >= 400:
+                logger.warning("Replicate image provider returned HTTP %s", response.status_code)
+                raise HTTPException(status_code=502, detail="The configured image provider rejected the request. Check its model configuration and account limits.")
+            data = response.json()
+            output = data.get("output")
+            urls = output if isinstance(output, list) else [output]
+            image_url = next((u for u in urls if isinstance(u, str) and u.startswith("https://")), None)
+            if image_url:
+                return {"attachment": {"type": "image", "url": image_url}, "provider": "replicate"}
+            if data.get("status") in ("starting", "processing"):
+                return {"status": "processing", "prediction_url": data.get("urls", {}).get("get"), "detail": "Image job started; polling is not yet automatic."}
+            raise HTTPException(status_code=502, detail="The image provider did not return an image. Check model output format.")
+        except HTTPException:
+            raise
+        except requests.RequestException as exc:
+            logger.warning("Replicate image request failed: %s", type(exc).__name__)
+            raise HTTPException(status_code=502, detail="Image provider could not be reached. Please retry.")
+    image_url = "https://image.pollinations.ai/prompt/" + quote(full_prompt, safe="") + "?width=1024&height=1024&nologo=true"
+    return {"attachment": {"type": "image", "url": image_url}, "provider": "pollinations", "status": "queued"}
+
+
+@app.post("/generate/video")
+def generate_video(req: MediaRequest, request: Request):
+    """Submit video generation only when a real Replicate video model is configured."""
+    prompt = _clean_media_prompt(req.prompt)
+    token = os.environ.get("REPLICATE_API_TOKEN", "").strip()
+    model = os.environ.get("REPLICATE_VIDEO_MODEL", "").strip()
+    if not token or not model:
+        raise HTTPException(
+            status_code=503,
+            detail="Video generation is not configured yet. Add REPLICATE_API_TOKEN and REPLICATE_VIDEO_MODEL to the backend's private environment, then redeploy. No video was generated.",
+        )
+    try:
+        response = HTTP.post(
+            "https://api.replicate.com/v1/models/" + model + "/predictions",
+            headers={"Authorization": f"Bearer {token}", "Prefer": "wait"},
+            json={"input": {"prompt": prompt}},
+            timeout=90,
+        )
+        if response.status_code >= 400:
+            logger.warning("Replicate video provider returned HTTP %s", response.status_code)
+            raise HTTPException(status_code=502, detail="The configured video provider rejected the request. Check the selected model, account, and billing limits.")
+        data = response.json()
+        output = data.get("output")
+        urls = output if isinstance(output, list) else [output]
+        video_url = next((u for u in urls if isinstance(u, str) and u.startswith("https://") and any(ext in u.lower() for ext in (".mp4", ".webm", ".mov"))), None)
+        if video_url:
+            return {"attachment": {"type": "video", "url": video_url}, "provider": "replicate", "status": "succeeded"}
+        if data.get("status") in ("starting", "processing"):
+            return {"status": "processing", "prediction_url": data.get("urls", {}).get("get"), "detail": "Video job is processing; polling is not yet automatic."}
+        raise HTTPException(status_code=502, detail="The video provider did not return a playable video URL.")
+    except HTTPException:
+        raise
+    except requests.RequestException as exc:
+        logger.warning("Replicate video request failed: %s", type(exc).__name__)
+        raise HTTPException(status_code=502, detail="Video provider could not be reached. Please retry.")
+
 
 @app.post("/public-chat")
 def public_chat(req: ChatRequest, request: Request):
